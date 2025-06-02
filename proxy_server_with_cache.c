@@ -10,6 +10,34 @@
 
 int server_socket;
 
+#define BUFFER_SIZE 8192
+
+// --- Logging ---
+void get_timestamp(char* buffer, size_t size) {
+    time_t now = time(NULL);
+    struct tm* t = localtime(&now);
+    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", t);
+}
+
+void log_request(const char* client_ip, const char* request_buffer) {
+    FILE* logfile = fopen("proxy.log", "a");
+    if (!logfile) return;
+
+    char timestamp[64];
+    get_timestamp(timestamp, sizeof(timestamp));
+
+    char host[256] = "UNKNOWN";
+    if (strncmp(request_buffer, "CONNECT", 7) == 0) {
+        sscanf(request_buffer, "CONNECT %255s", host);
+    } else {
+        const char* host_header = strstr(request_buffer, "Host: ");
+        if (host_header) sscanf(host_header, "Host: %255s", host);
+    }
+
+    fprintf(logfile, "[%s] %s requested %s\n", timestamp, client_ip, host);
+    fclose(logfile);
+}
+
 // Thread function to handle individual client connections
 void* handle_client(void* arg) {
     int client_sock = *(int*)arg;
@@ -131,6 +159,7 @@ void* handle_client(void* arg) {
     close(server_sock);
     close(client_sock);
     return NULL;
+    
 }
 
 
