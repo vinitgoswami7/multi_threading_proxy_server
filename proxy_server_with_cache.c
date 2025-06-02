@@ -9,9 +9,20 @@
 #include <stdbool.h>
 #include <openssl/sha.h>
 #include <sys/socket.h>
+#include <signal.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 8192
+
+int server_sock;
+bool keep_running = true;
+
+void shutdown_server(int signum) {
+    printf("\n🔴 Shutdown signal received. Closing server socket...\n");
+    keep_running = false;
+    close(server_sock);
+    exit(0);
+}
 
 void sha1_hash(const char* input, char* output) {
     unsigned char hash[SHA_DIGEST_LENGTH];
@@ -128,7 +139,9 @@ void* handle_client(void* arg) {
 }
 
 int main() {
-    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    signal(SIGINT, shutdown_server);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in server_addr;
 
     server_addr.sin_family = AF_INET;
@@ -138,14 +151,19 @@ int main() {
     bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
     listen(server_sock, 10);
 
-    printf("🚀 Proxy server running on port %d...\n", PORT);
+    printf("🚀 Proxy server running on port %d... (Ctrl+C to stop)\n", PORT);
     mkdir("cache", 0777);
 
-    while (1) {
+    while (keep_running) {
         struct sockaddr_in client_addr;
         socklen_t addr_len = sizeof(client_addr);
         int* client_sock = malloc(sizeof(int));
         *client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &addr_len);
+
+        if (*client_sock < 0) {
+            free(client_sock);
+            continue;
+        }
 
         pthread_t thread_id;
         pthread_create(&thread_id, NULL, handle_client, client_sock);
