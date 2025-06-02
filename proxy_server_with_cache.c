@@ -33,6 +33,37 @@ void* handle_client(void* arg) {
     return NULL;
 }
 
+
+int extract_host_port(const char *request, char *host, int *port) {
+    const char *host_start = strstr(request, "Host: ");
+    if (!host_start) return -1;
+
+    host_start += 6;
+    const char *host_end = strstr(host_start, "\r\n");
+    if (!host_end) return -1;
+
+    size_t host_len = host_end - host_start;
+    strncpy(host, host_start, host_len);
+    host[host_len] = '\0';
+
+    // Default HTTP port
+    *port = 80;
+
+    // If port is included
+    char *colon = strchr(host, ':');
+    if (colon) {
+        *colon = '\0';
+        *port = atoi(colon + 1);
+    }
+
+    return 0;
+}
+
+
+
+
+
+
 // Graceful shutdown
 void shutdown_handler(int signum) {
     close(server_socket);
