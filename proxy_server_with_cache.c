@@ -70,6 +70,57 @@ void cache_response(const char* url, const char* response, size_t size) {
     printf("💾 Cached: %s\n", url);
 }
 
+void *tunnel_data(void *args) {
+    int *socks = (int *)args;
+    char buffer[BUFFER_SIZE];
+    ssize_t n;
+
+    while ((n = recv(socks[0], buffer, sizeof(buffer), 0)) > 0) {
+        send(socks[1], buffer, n, 0);
+    }
+
+    shutdown(socks[0], SHUT_RDWR);
+    shutdown(socks[1], SHUT_RDWR);
+    free(socks);
+    return NULL;
+}
+
+void handle_connect_tunnel(int client_sock, const char *host, int port) {
+    struct hostent *hp = gethostbyname(host);
+    if (hp == NULL) {
+        perror("gethostbyname");
+        close(client_sock);
+        return;
+    }
+
+    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr = *((struct in_addr *)hp->h_addr);
+
+    if (connect(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("connect");
+        close(client_sock);
+        return;
+    }
+
+    const char *success_msg = "HTTP/1.1 200 Connection Established\r\n\r\n";
+    send(client_sock, success_msg, strlen(success_msg), 0);
+
+    pthread_t t1, t2;
+    int *c2s = malloc(2 * sizeof(int));
+    int *s2c = malloc(2 * sizeof(int));
+    c2s[0] = client_sock; c2s[1] = server_sock;
+    s2c[0] = server_sock; s2c[1] = client_sock;
+
+    pthread_create(&t1, NULL, tunnel_data, c2s);
+    pthread_create(&t2, NULL, tunnel_data, s2c);
+
+    pthread_detach(t1);
+    pthread_detach(t2);
+}
+
 void forward_request(int client_sock, const char* request) {
     char host[256];
     int port = 80;
@@ -133,7 +184,16 @@ void* handle_client(void* arg) {
     }
 
     buffer[bytes_received] = '\0';
-    forward_request(client_sock, buffer);
+
+    if (strncmp(buffer, "CONNECT", 7) == 0) {
+        char host[256];
+        int port;
+        sscanf(buffer, "CONNECT %255[^:]:%d", host, &port);
+        handle_connect_tunnel(client_sock, host, port);
+    } else {
+        forward_request(client_sock, buffer);
+    }
+
     close(client_sock);
     return NULL;
 }
