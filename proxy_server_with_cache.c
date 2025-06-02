@@ -71,6 +71,69 @@ void shutdown_handler(int signum) {
     exit(0);
 }
 
+void* handle_client(void* arg) {
+    int client_sock = *(int*)arg;
+    free(arg);
+
+    char buffer[8192], host[256];
+    int port;
+
+    // Receive HTTP request from client
+    int bytes_received = recv(client_sock, buffer, sizeof(buffer), 0);
+    if (bytes_received <= 0) {
+        close(client_sock);
+        return NULL;
+    }
+    buffer[bytes_received] = '\0';
+
+    if (extract_host_port(buffer, host, &port) < 0) {
+        fprintf(stderr, "Failed to extract host from request\n");
+        close(client_sock);
+        return NULL;
+    }
+
+    // Resolve host
+    struct hostent *remote_host = gethostbyname(host);
+    if (!remote_host) {
+        fprintf(stderr, "DNS resolution failed for host %s\n", host);
+        close(client_sock);
+        return NULL;
+    }
+
+    // Connect to target server
+    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) {
+        perror("Socket creation to target failed");
+        close(client_sock);
+        return NULL;
+    }
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    memcpy(&server_addr.sin_addr, remote_host->h_addr, remote_host->h_length);
+
+    if (connect(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection to target server failed");
+        close(server_sock);
+        close(client_sock);
+        return NULL;
+    }
+
+    // Forward client request to server
+    send(server_sock, buffer, bytes_received, 0);
+
+    // Relay response from server back to client
+    while ((bytes_received = recv(server_sock, buffer, sizeof(buffer), 0)) > 0) {
+        send(client_sock, buffer, bytes_received, 0);
+    }
+
+    close(server_sock);
+    close(client_sock);
+    return NULL;
+}
+
+
 int main() {
     signal(SIGINT, shutdown_handler);  // Ctrl+C handling
 
